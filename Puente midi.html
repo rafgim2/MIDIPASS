@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>MIDI Passthrough</title>
+</head>
+<body>
+  <h1>MIDI In → MIDI Out</h1>
+
+  <label for="midiInSelect">Entrada MIDI:</label>
+  <select id="midiInSelect"></select><br><br>
+
+  <label for="midiOutSelect">Salida MIDI:</label>
+  <select id="midiOutSelect"></select><br><br>
+
+  <p id="status">Esperando dispositivos MIDI...</p>
+
+  <script>
+    let midiAccess;
+    let selectedInput = null;
+    let selectedOutput = null;
+
+    async function initMIDI() {
+      try {
+        midiAccess = await navigator.requestMIDIAccess();
+        updateDeviceLists();
+        midiAccess.onstatechange = updateDeviceLists;
+        document.getElementById("status").innerText = "Dispositivos MIDI listos.";
+      } catch (err) {
+        document.getElementById("status").innerText = "Error al acceder a dispositivos MIDI: " + err;
+      }
+    }
+
+    function updateDeviceLists() {
+      const inputSelect = document.getElementById("midiInSelect");
+      const outputSelect = document.getElementById("midiOutSelect");
+
+      // Limpiar opciones
+      inputSelect.innerHTML = "";
+      outputSelect.innerHTML = "";
+
+      // Rellenar entradas
+      midiAccess.inputs.forEach((input, id) => {
+        const option = document.createElement("option");
+        option.value = id;
+        option.text = input.name;
+        inputSelect.appendChild(option);
+      });
+
+      // Rellenar salidas
+      midiAccess.outputs.forEach((output, id) => {
+        const option = document.createElement("option");
+        option.value = id;
+        option.text = output.name;
+        outputSelect.appendChild(option);
+      });
+
+      // Establecer manejadores
+      inputSelect.onchange = () => {
+        if (selectedInput) selectedInput.onmidimessage = null;
+        const inputId = inputSelect.value;
+        selectedInput = Array.from(midiAccess.inputs.values())[inputId];
+        if (selectedInput) {
+          selectedInput.onmidimessage = handleMIDIMessage;
+        }
+      };
+
+      outputSelect.onchange = () => {
+        const outputId = outputSelect.value;
+        selectedOutput = Array.from(midiAccess.outputs.values())[outputId];
+      };
+    }
+
+    function handleMIDIMessage(event) {
+      if (selectedOutput) {
+        selectedOutput.send(event.data);
+      }
+    }
+
+    initMIDI();
+  </script>
+</body>
+</html>
