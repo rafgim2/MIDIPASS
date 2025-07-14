@@ -1,85 +1,145 @@
 <!DOCTYPE html>
 <html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <title>MIDI Passthrough (In → Out)</title>
-</head>
-<body>
-  <h2>MIDI Passthrough</h2>
-
-  <label for="inputSelect">Dispositivo de entrada (MIDI In):</label>
-  <select id="inputSelect"></select><br><br>
-
-  <label for="outputSelect">Dispositivo de salida (MIDI Out):</label>
-  <select id="outputSelect"></select><br><br>
-
-  <p id="status">Inicializando MIDI...</p>
-
-  <script>
-    let midiAccess = null;
-    let midiInput = null;
-    let midiOutput = null;
-
-    async function initMIDI() {
-      try {
-        midiAccess = await navigator.requestMIDIAccess();
-        document.getElementById("status").innerText = "MIDI listo.";
-        populateDeviceLists();
-        midiAccess.onstatechange = populateDeviceLists;
-      } catch (err) {
-        document.getElementById("status").innerText = "Error al acceder a MIDI: " + err;
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Web MIDI Forwarder</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        background: #f7f7f7;
+        display: grid;
+        place-content: center;
+        height: 100vh;
+        margin: 0;
       }
-    }
+      .card {
+        background: #ffffff;
+        border-radius: 1rem;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        padding: 2rem;
+        width: min(90vw, 420px);
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+        text-align: center;
+      }
+      label {
+        display: block;
+        margin: 0.75rem 0 0.25rem;
+        font-weight: 600;
+      }
+      select {
+        width: 100%;
+        padding: 0.5rem;
+        border-radius: 0.5rem;
+        border: 1px solid #ccc;
+        background: #fff;
+      }
+      .status {
+        margin-top: 1rem;
+        text-align: center;
+        font-size: 0.9rem;
+        color: #555;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>MIDI Forwarder</h1>
 
-    function populateDeviceLists() {
-      const inputSelect = document.getElementById("inputSelect");
-      const outputSelect = document.getElementById("outputSelect");
+      <label for="midiIn">Entrada MIDI</label>
+      <select id="midiIn"></select>
 
-      inputSelect.innerHTML = "";
-      outputSelect.innerHTML = "";
+      <label for="midiOut">Salida MIDI</label>
+      <select id="midiOut"></select>
 
-      midiAccess.inputs.forEach((input, key) => {
-        const option = document.createElement("option");
-        option.value = key;
-        option.textContent = input.name;
-        inputSelect.appendChild(option);
-      });
+      <p class="status" id="status">Conectando a Web MIDI…</p>
+    </div>
 
-      midiAccess.outputs.forEach((output, key) => {
-        const option = document.createElement("option");
-        option.value = key;
-        option.textContent = output.name;
-        outputSelect.appendChild(option);
-      });
+    <script>
+      (function () {
+        let midiAccess;
+        let selectedIn = null;
+        let selectedOut = null;
 
-      inputSelect.onchange = () => {
-        if (midiInput) midiInput.onmidimessage = null;
-        const selectedId = inputSelect.value;
-        midiInput = midiAccess.inputs.get(selectedId);
-        if (midiInput) {
-          midiInput.onmidimessage = handleMIDIMessage;
+        const inSelect = document.getElementById("midiIn");
+        const outSelect = document.getElementById("midiOut");
+        const statusEl = document.getElementById("status");
+
+        function logStatus(msg) {
+          statusEl.textContent = msg;
+          console.log(msg);
         }
-      };
 
-      outputSelect.onchange = () => {
-        const selectedId = outputSelect.value;
-        midiOutput = midiAccess.outputs.get(selectedId);
-      };
+        function populateSelect(select, items) {
+          select.innerHTML = "";
+          [...items].forEach((port) => {
+            const option = document.createElement("option");
+            option.value = port.id;
+            option.textContent = `${port.name} (${port.manufacturer || ""})`;
+            select.appendChild(option);
+          });
+        }
 
-      // Auto-seleccionar si hay solo uno
-      if (inputSelect.options.length === 1) inputSelect.selectedIndex = 0;
-      if (outputSelect.options.length === 1) outputSelect.selectedIndex = 0;
-      inputSelect.dispatchEvent(new Event("change"));
-      outputSelect.dispatchEvent(new Event("change"));
-    }
+        function wireIn(port) {
+          if (selectedIn) {
+            selectedIn.onmidimessage = null;
+          }
+          selectedIn = port;
+          if (selectedIn) {
+            selectedIn.onmidimessage = (ev) => {
+              if (selectedOut) {
+                // Forward message preserving original timestamp offset
+                selectedOut.send(ev.data, window.performance.now());
+              }
+            };
+          }
+        }
 
-    function handleMIDIMessage(event) {
-      if (midiOutput) {
-        midiOutput.send(event.data, event.timeStamp);
-      }
-    }
+        function wireOut(port) {
+          selectedOut = port;
+        }
 
-    initMIDI();
-  </script>
-</body>
+        async function initMIDI() {
+          try {
+            midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+            populateSelect(inSelect, midiAccess.inputs.values());
+            populateSelect(outSelect, midiAccess.outputs.values());
+            logStatus("Selecciona la entrada y la salida MIDI.");
+
+            inSelect.addEventListener("change", () => {
+              const port = midiAccess.inputs.get(inSelect.value);
+              wireIn(port);
+              logStatus(`Escuchando en "${port.name}" …`);
+            });
+            outSelect.addEventListener("change", () => {
+              const port = midiAccess.outputs.get(outSelect.value);
+              wireOut(port);
+              logStatus(`Enviando a "${port.name}" …`);
+            });
+
+            // Auto‑select first ports if available
+            if (inSelect.options.length) {
+              inSelect.selectedIndex = 0;
+              wireIn(midiAccess.inputs.get(inSelect.value));
+            }
+            if (outSelect.options.length) {
+              outSelect.selectedIndex = 0;
+              wireOut(midiAccess.outputs.get(outSelect.value));
+            }
+          } catch (err) {
+            logStatus("Web MIDI no está disponible: " + err.message);
+          }
+        }
+
+        if (navigator.requestMIDIAccess) {
+          initMIDI();
+        } else {
+          logStatus("Tu navegador no soporta la Web MIDI API.");
+        }
+      })();
+    </script>
+  </body>
 </html>
