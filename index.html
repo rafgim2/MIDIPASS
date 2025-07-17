@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Web MIDI Forwarder</title>
+    <title>Web MIDI Forwarder</title>
     <style>
       body {
         font-family: system-ui, sans-serif;
@@ -18,7 +18,7 @@
         border-radius: 1rem;
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
         padding: 2rem;
-        width: min(90vw, 420px);
+        width: min(90vw, 480px);
       }
       h1 {
         font-size: 1.5rem;
@@ -37,6 +37,10 @@
         border: 1px solid #ccc;
         background: #fff;
       }
+      /* Hacemos el multi-select un poco más alto para que se vean varias líneas */
+      select[multiple] {
+        height: 6rem;
+      }
       .status {
         margin-top: 1rem;
         text-align: center;
@@ -52,8 +56,8 @@
       <label for="midiIn">Entrada MIDI</label>
       <select id="midiIn"></select>
 
-      <label for="midiOut">Salida MIDI</label>
-      <select id="midiOut"></select>
+      <label for="midiOut">Salidas MIDI (puedes seleccionar varias)</label>
+      <select id="midiOut" multiple></select>
 
       <p class="status" id="status">Conectando a Web MIDI…</p>
     </div>
@@ -62,7 +66,7 @@
       (function () {
         let midiAccess;
         let selectedIn = null;
-        let selectedOut = null;
+        let selectedOuts = [];
 
         const inSelect = document.getElementById("midiIn");
         const outSelect = document.getElementById("midiOut");
@@ -84,22 +88,29 @@
         }
 
         function wireIn(port) {
+          // Desconecta listener anterior
           if (selectedIn) {
             selectedIn.onmidimessage = null;
           }
           selectedIn = port;
           if (selectedIn) {
             selectedIn.onmidimessage = (ev) => {
-              if (selectedOut) {
-                // Forward message preserving original timestamp offset
-                selectedOut.send(ev.data, window.performance.now());
+              const ts = window.performance.now();
+              if (selectedOuts.length) {
+                // Para cada salida seleccionada, reenviamos el mensaje
+                selectedOuts.forEach((outPort) => {
+                  outPort.send(ev.data, ts);
+                });
               }
             };
           }
         }
 
-        function wireOut(port) {
-          selectedOut = port;
+        function updateSelectedOuts() {
+          // Construye un array de puertos de salida según las opciones seleccionadas
+          selectedOuts = Array.from(outSelect.selectedOptions)
+            .map(opt => midiAccess.outputs.get(opt.value))
+            .filter(p => p);
         }
 
         async function initMIDI() {
@@ -107,28 +118,34 @@
             midiAccess = await navigator.requestMIDIAccess({ sysex: false });
             populateSelect(inSelect, midiAccess.inputs.values());
             populateSelect(outSelect, midiAccess.outputs.values());
-            logStatus("Selecciona la entrada y la salida MIDI.");
+            logStatus("Selecciona la entrada y las salidas MIDI.");
 
             inSelect.addEventListener("change", () => {
               const port = midiAccess.inputs.get(inSelect.value);
               wireIn(port);
               logStatus(`Escuchando en "${port.name}" …`);
             });
+
             outSelect.addEventListener("change", () => {
-              const port = midiAccess.outputs.get(outSelect.value);
-              wireOut(port);
-              logStatus(`Enviando a "${port.name}" …`);
+              updateSelectedOuts();
+              const names = selectedOuts.map(p => p.name).join(' + ');
+              logStatus(`Enviando a: ${names}`);
             });
 
-            // Auto‑select first ports if available
+            // Auto‑select primera entrada y primeras salidas si hay
             if (inSelect.options.length) {
               inSelect.selectedIndex = 0;
               wireIn(midiAccess.inputs.get(inSelect.value));
             }
             if (outSelect.options.length) {
-              outSelect.selectedIndex = 0;
-              wireOut(midiAccess.outputs.get(outSelect.value));
+              // Seleccionamos todo por defecto
+              for (let i = 0; i < outSelect.options.length; i++) {
+                outSelect.options[i].selected = true;
+              }
+              updateSelectedOuts();
             }
+
+            logStatus("Listo: tráfico MIDI reenviado entre dispositivos.");
           } catch (err) {
             logStatus("Web MIDI no está disponible: " + err.message);
           }
